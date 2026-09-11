@@ -16,6 +16,7 @@ class GitHubRelease:
     tarball_url: str
     html_url: str
     prerelease: bool
+    bleeding_edge: bool = False
     assets: list = field(default_factory=list)
 
     @property

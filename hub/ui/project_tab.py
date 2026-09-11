@@ -7,6 +7,7 @@ from PyQt6.QtGui import QFont
 
 from hub.core.project_manager import ProjectManager
 from hub.core.version_manager import VersionManager
+from hub.ui import icons
 from hub.ui.widgets import ProjectCard
 
 
@@ -28,12 +29,14 @@ class ProjectTab(QWidget):
         title.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
         header_layout.addWidget(title)
         header_layout.addStretch()
-        self.btn_new = QPushButton("  +  New project")
+        self.btn_new = QPushButton("  New project")
         self.btn_new.setFixedHeight(36)
         self.btn_new.setCursor(Qt.CursorShape.PointingHandCursor)
+        icons.set_icon(self.btn_new, "fa5s.plus")
         self.btn_open = QPushButton("  Open")
         self.btn_open.setFixedHeight(36)
         self.btn_open.setCursor(Qt.CursorShape.PointingHandCursor)
+        icons.set_icon(self.btn_open, "fa5s.folder-open")
         header_layout.addWidget(self.btn_new)
         header_layout.addWidget(self.btn_open)
         layout.addWidget(header)

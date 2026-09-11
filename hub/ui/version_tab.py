@@ -7,6 +7,7 @@ from PyQt6.QtGui import QFont
 
 from hub.core.version_manager import VersionManager
 from hub.core.github_api import GitHubAPI
+from hub.ui import icons
 from hub.ui.widgets import VersionCard
 from hub.ui.install_dialog import InstallOutputDialog
 
@@ -66,6 +67,7 @@ class VersionTab(QWidget):
         self.btn_change_path = QPushButton("Change folder")
         self.btn_change_path.setFixedHeight(28)
         self.btn_change_path.setCursor(Qt.CursorShape.PointingHandCursor)
+        icons.set_icon(self.btn_change_path, "fa5s.folder-open")
         self.btn_change_path.clicked.connect(self._on_change_install_path)
         header_layout.addWidget(self.btn_change_path)
 
@@ -73,10 +75,12 @@ class VersionTab(QWidget):
         self.btn_add_existing = QPushButton("  Add existing")
         self.btn_add_existing.setFixedHeight(36)
         self.btn_add_existing.setCursor(Qt.CursorShape.PointingHandCursor)
+        icons.set_icon(self.btn_add_existing, "fa5s.plus")
         header_layout.addWidget(self.btn_add_existing)
         self.btn_refresh = QPushButton("  Check for updates")
         self.btn_refresh.setFixedHeight(36)
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
+        icons.set_icon(self.btn_refresh, "fa5s.sync-alt")
         header_layout.addWidget(self.btn_refresh)
         layout.addWidget(header)
 
@@ -129,9 +133,11 @@ class VersionTab(QWidget):
             is_installed = tag in installed
             is_latest = tag == latest_tag
             info = installed.get(tag, {})
+            is_bleeding = release.bleeding_edge or info.get("bleeding_edge", False)
             card = VersionCard(tag, is_installed, is_latest,
                                info.get("path", ""),
-                               commit_date=info.get("commit_date", ""))
+                               commit_date=info.get("commit_date", ""),
+                               is_bleeding=is_bleeding)
             btn_layout = QHBoxLayout()
             btn_layout.setContentsMargins(0, 0, 16, 0)
             btn_layout.setSpacing(8)
@@ -139,9 +145,11 @@ class VersionTab(QWidget):
                 btn_launch = QPushButton("Launch")
                 btn_launch.setFixedHeight(32)
                 btn_launch.setCursor(Qt.CursorShape.PointingHandCursor)
+                icons.set_icon(btn_launch, "fa5s.play", icons.SUCCESS_GREEN)
                 btn_remove = QPushButton("Remove")
                 btn_remove.setFixedHeight(32)
                 btn_remove.setCursor(Qt.CursorShape.PointingHandCursor)
+                icons.set_icon(btn_remove, "fa5s.trash-alt", icons.WARNING_RED)
                 btn_launch.clicked.connect(lambda checked, t=tag: self._launch(t))
                 btn_remove.clicked.connect(lambda checked, t=tag: self._remove(t))
                 btn_layout.addWidget(btn_launch)
@@ -150,6 +158,7 @@ class VersionTab(QWidget):
                 btn_install = QPushButton("Download" if not is_latest else "Download Latest")
                 btn_install.setFixedHeight(32)
                 btn_install.setCursor(Qt.CursorShape.PointingHandCursor)
+                icons.set_icon(btn_install, "fa5s.download", icons.ACCENT_BLUE)
                 btn_install.clicked.connect(lambda checked, t=tag: self._install(t))
                 btn_layout.addWidget(btn_install)
             card.layout().addLayout(btn_layout)

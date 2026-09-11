@@ -11,7 +11,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    app.setOrganizationName("EgorKonstrukt")
+    app.setOrganizationName("Zarrakun")
     app.setApplicationName("ZarinHub")
 
     window = MainWindow()

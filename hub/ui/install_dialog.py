@@ -7,6 +7,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QTextCursor
 
+from hub.ui import icons
+
 
 def ansi_to_html(text: str) -> str:
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -58,6 +60,15 @@ class InstallOutputDialog(QDialog):
         )
         self._cancelled = False
         self._last_lines: list[str] = []
+        self._busy_timer = QTimer(self)
+        self._busy_timer.setInterval(500)
+        self._busy_timer.timeout.connect(self._tick_busy)
+        self._busy_dots = 0
+        self._busy_base = ""
+        self._stall_timer = QTimer(self)
+        self._stall_timer.setSingleShot(True)
+        self._stall_timer.setInterval(3000)
+        self._stall_timer.timeout.connect(self._on_stalled)
         self._setup_ui()
 
     def _setup_ui(self):
@@ -85,6 +96,7 @@ class InstallOutputDialog(QDialog):
         self.btn_cancel = QPushButton("Cancel")
         self.btn_cancel.setFixedSize(80, 28)
         self.btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        icons.set_icon(self.btn_cancel, "fa5s.times")
         self.btn_cancel.clicked.connect(self._on_cancel)
         hl.addWidget(self.btn_cancel)
         bl.addLayout(hl)
@@ -100,6 +112,7 @@ class InstallOutputDialog(QDialog):
         return self._cancelled
 
     def append_line(self, text: str, is_error: bool = False):
+        self._stall_timer.start()
         raw = text.rstrip("\r\n")
         if not raw:
             return
@@ -129,11 +142,28 @@ class InstallOutputDialog(QDialog):
     def set_progress(self, value: int, status: str = ""):
         self.progress.setValue(value)
         if status:
+            self._busy_base = status
             self.status_label.setText(status)
+            self._busy_timer.stop()
+        self._stall_timer.start()
+
+    def _on_stalled(self):
+        if not self._busy_base:
+            return
+        self._busy_dots = 0
+        self._busy_timer.start()
+
+    def _tick_busy(self):
+        self._busy_dots = (self._busy_dots + 1) % 4
+        dots = "." * self._busy_dots
+        self.status_label.setText(self._busy_base + "  " + dots)
 
     def set_finished(self, success: bool, message: str = ""):
+        self._busy_timer.stop()
+        self._stall_timer.stop()
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.setText("Close")
+        icons.set_icon(self.btn_cancel, "fa5s.check", icons.SUCCESS_GREEN)
         self.btn_cancel.clicked.disconnect()
         self.btn_cancel.clicked.connect(self.accept)
         if success:

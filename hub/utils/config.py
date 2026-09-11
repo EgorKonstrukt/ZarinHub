@@ -32,6 +32,7 @@ class Config:
         "language": "ru",
         "github_repo": "EgorKonstrukt/ZarinEngine",
         "source_type": "release",
+        "hub_github_repo": "EgorKonstrukt/ZarinHub",
         "enabled_platforms": ["windows"],
         "recent_projects_max": 10,
     }

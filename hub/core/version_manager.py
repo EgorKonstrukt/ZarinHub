@@ -98,6 +98,7 @@ class VersionManager:
             tarball_url="",
             html_url=f"https://github.com/{repo}",
             prerelease=False,
+            bleeding_edge=True,
         )
         return [pseudo]
 
@@ -192,7 +193,8 @@ class VersionManager:
             progress_callback(0.6, "Setting up virtual environment...")
         self.installer.install_editor_dependencies(
             target_dir,
-            output_callback
+            output_callback=output_callback,
+            progress_callback=progress_callback,
         )
         if output_callback:
             output_callback("Configuring system registry...", False)
@@ -203,6 +205,7 @@ class VersionManager:
         (target_dir / "version.txt").write_text(tag, encoding="utf-8")
         meta = {"installed_at": datetime.now().isoformat(), "tag": tag}
         if not release:
+            meta["bleeding_edge"] = True
             commit_date = api.get_branch_commit_date(tag)
             commit_sha = api.get_branch_commit_sha(tag)
             if commit_date:

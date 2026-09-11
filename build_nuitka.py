@@ -1,7 +1,7 @@
 """
 ZarinHub — Nuitka build + installer script.
 """
-import subprocess, sys, shutil, argparse, textwrap
+import subprocess, sys, os, shutil, argparse, textwrap
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -28,6 +28,9 @@ parser.add_argument("--output-dir", default=str(DIST_DIR), help="Output director
 parser.add_argument("--clean", action="store_true", help="Remove output dir before build")
 parser.add_argument("--jobs", type=int, default=0, help="Parallel jobs (0 = auto)")
 parser.add_argument("--installer", action="store_true", help="Build Inno Setup installer after compile")
+parser.add_argument("--compiler", choices=("auto", "mingw", "msvc"), default="auto",
+                    help="C compiler for Nuitka (default: auto = MinGW-w64, auto-downloaded; "
+                         "no heavy MSVC install needed). Use 'msvc' to force Visual Studio.")
 known, remaining = parser.parse_known_args()
 
 OUTPUT_DIR = Path(known.output_dir)
@@ -85,12 +88,16 @@ def _write_iss(ico_path: str, source_path: str) -> str:
         ver.append("0")
     ver_str = ".".join(ver)
 
+    import uuid
+    app_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"com.zarrakun.{APP_NAME.lower()}"))
+
     content = f"""\
 [Setup]
 AppName={APP_NAME}
 AppVersion={APP_VERSION}
 AppVerName={APP_NAME} {APP_VERSION}
-AppPublisher=EgorKonstrukt
+AppPublisher=Zarrakun
+AppId={app_id}
 DefaultDirName={{autopf}}\\{APP_NAME}
 DefaultGroupName={APP_NAME}
 OutputDir={OUTPUT_DIR.as_posix()}
@@ -101,6 +108,11 @@ Compression=lzma2/max
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
+DisableDirPage=auto
+DisableProgramGroupPage=auto
+UsePreviousAppDir=yes
+UsePreviousGroup=yes
+UpdateUninstallLogAppName=no
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"
@@ -125,15 +137,37 @@ Filename: "{{app}}\\ZarinHub.exe"; Description: "Launch {APP_NAME}"; Flags: post
 if known.clean and OUTPUT_DIR.exists():
     shutil.rmtree(OUTPUT_DIR)
 
+# --- C compiler: compact auto-downloaded MinGW-w64 by default (no MSVC) ---
+sys.path.insert(0, str(ROOT))
+try:
+    from tools.mingw import ensure_mingw, nuitka_flags, resolve_compiler, activate
+    _COMPILER = resolve_compiler(known.compiler if known.compiler != "auto" else None)
+    print(f"C compiler: {_COMPILER} (MinGW-w64 is compact, MSVC would need several GB)")
+    _COMPILER_FLAGS = nuitka_flags(known.compiler if known.compiler != "auto" else None)
+    _BUILD_ENV = dict(os.environ)
+    if sys.platform == "win32" and _COMPILER == "mingw":
+        try:
+            _BUILD_ENV = activate(ensure_mingw())
+        except Exception as e:
+            print(f"WARNING: MinGW-w64 auto-download failed: {e}")
+            print("Falling back to Nuitka's own toolchain download.")
+            _BUILD_ENV = dict(os.environ)
+except ImportError:
+    _COMPILER_FLAGS = ["--assume-yes-for-downloads"]
+    _BUILD_ENV = dict(os.environ)
+print(f"Nuitka compiler flags: {_COMPILER_FLAGS}")
+
 # --- Nuitka build ---
 cmd = [
     sys.executable, "-m", "nuitka",
     "--standalone",
+    *_COMPILER_FLAGS,
     "--enable-plugin=pyqt6",
     "--output-dir=" + str(OUTPUT_DIR),
     "--output-filename=ZarinHub",
     "--windows-icon-from-ico=" + ico_path,
     "--include-package=hub",
+    "--include-package-data=qtawesome",
     "--include-data-file=zarin_logo.svg=zarin_logo.svg",
     "--include-data-file=zarin_icon.svg=zarin_icon.svg",
     "--include-data-file=zarin_icon.ico=zarin_icon.ico",
@@ -154,7 +188,7 @@ print(f"Building ZarinHub ({MODE}) with Nuitka ({sys.executable})")
 print(f"Output: {OUTPUT_DIR}")
 print()
 
-result = subprocess.run(cmd, cwd=str(ROOT))
+result = subprocess.run(cmd, cwd=str(ROOT), env=_BUILD_ENV)
 
 if result.returncode != 0:
     print(f"\nBuild failed (exit code {result.returncode})")

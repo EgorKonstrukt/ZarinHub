@@ -6,6 +6,12 @@ from pathlib import Path
 from hub.utils.config import Config
 
 
+if sys.platform == "win32":
+    _NO_WINDOW = subprocess.CREATE_NO_WINDOW
+else:
+    _NO_WINDOW = 0
+
+
 class Installer:
     def __init__(self):
         self.cfg = Config()
@@ -32,15 +38,67 @@ class Installer:
              "Include_test=0",
              "Include_launcher=0",
              "Include_symbols=0"],
-            check=True, timeout=300
+            check=True, creationflags=_NO_WINDOW
         )
         installer_path.unlink()
         if output_callback:
             output_callback(f"Python installed to {python_dir}", False)
 
     @staticmethod
-    def _ensure_msvc(output_callback=None):
+    def _find_existing_msvc() -> bool:
         if shutil.which("cl"):
+            return True
+        # Try vswhere.exe (Microsoft's VS locator)
+        for vsdir in [
+            Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")),
+            Path(os.environ.get("ProgramFiles", "C:/Program Files")),
+        ]:
+            vswhere = vsdir / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+            if vswhere.exists():
+                try:
+                    result = subprocess.run(
+                        [str(vswhere), "-latest", "-products", "*",
+                         "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                         "-property", "installationPath"],
+                        capture_output=True, text=True, timeout=15, creationflags=_NO_WINDOW
+                    )
+                    if result.returncode == 0:
+                        vspath = result.stdout.strip()
+                        if vspath:
+                            root = Path(vspath)
+                            for msvc_dir in sorted((root / "VC" / "Tools" / "MSVC").glob("*"), reverse=True):
+                                for arch in ["Hostx64/x64", "Hostx86/x64", "Hostx64/x86"]:
+                                    cl_path = msvc_dir / "bin" / arch
+                                    if (cl_path / "cl.exe").exists():
+                                        os.environ["PATH"] = str(cl_path) + os.pathsep + os.environ.get("PATH", "")
+                                        return True
+                except (subprocess.TimeoutExpired, OSError):
+                    pass
+                break
+        # Scan known installation paths
+        candidates = []
+        for pf in [Path(os.environ.get("ProgramFiles", "C:/Program Files")),
+                   Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")),
+                   Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "VisualStudio"]:
+            if not pf.exists():
+                continue
+            for year in ["2022", "2019", "2017"]:
+                for edition in ["BuildTools", "Community", "Professional", "Enterprise"]:
+                    candidates.append(pf / "Microsoft Visual Studio" / year / edition)
+        for root in candidates:
+            if not root.exists():
+                continue
+            for msvc_dir in sorted((root / "VC" / "Tools" / "MSVC").glob("*"), reverse=True):
+                for arch in ["Hostx64/x64", "Hostx86/x64", "Hostx64/x86"]:
+                    cl_path = msvc_dir / "bin" / arch
+                    if (cl_path / "cl.exe").exists():
+                        os.environ["PATH"] = str(cl_path) + os.pathsep + os.environ.get("PATH", "")
+                        return True
+        return False
+
+    @staticmethod
+    def _ensure_msvc(output_callback=None):
+        if Installer._find_existing_msvc():
             return
         if output_callback:
             output_callback("Downloading C++ Build Tools (required for packages like pybullet)...", False)
@@ -48,37 +106,39 @@ class Installer:
         dest.parent.mkdir(parents=True, exist_ok=True)
         from hub.utils.platform import download_file
         download_file("https://aka.ms/vs/17/release/vs_BuildTools.exe", dest)
+        if not dest.exists() or dest.stat().st_size < 1024:
+            if output_callback:
+                output_callback("Failed to download VS Build Tools installer.", True)
+            return
         if output_callback:
-            output_callback("Installing C++ Build Tools (this may take several minutes)...", False)
-        subprocess.run(
-            [str(dest), "--quiet", "--wait", "--norestart",
+            output_callback("Installing C++ Build Tools (this may take several minutes, may prompt for admin)...", False)
+        result = subprocess.run(
+            [str(dest), "--wait", "--norestart",
              "--add", "Microsoft.VisualStudio.Workload.VCTools",
              "--includeRecommended"],
-            check=True, timeout=600
         )
-        dest.unlink()
-        for root in [
-            Path("C:/Program Files/Microsoft Visual Studio/2022/BuildTools"),
-            Path("C:/Program Files (x86)/Microsoft Visual Studio/2019/BuildTools"),
-        ]:
-            if not root.exists():
-                continue
-            for msvc_dir in sorted((root / "VC" / "Tools" / "MSVC").glob("*"), reverse=True):
-                cl_path = msvc_dir / "bin" / "Hostx64" / "x64"
-                if (cl_path / "cl.exe").exists():
-                    os.environ["PATH"] = str(cl_path) + os.pathsep + os.environ.get("PATH", "")
-                    return
+        dest.unlink(missing_ok=True)
+        if result.returncode != 0:
+            Installer._find_existing_msvc()
+            if output_callback:
+                if result.returncode == 5008:
+                    output_callback("C++ Build Tools installation cancelled or failed (needs admin rights).", True)
+                    output_callback("You can install manually from: https://aka.ms/vs/17/release/vs_BuildTools.exe", False)
+                else:
+                    output_callback(f"C++ Build Tools installer exited with code {result.returncode}.", True)
+            return
+        Installer._find_existing_msvc()
         if output_callback:
-            output_callback("C++ Build Tools installed. Retrying build...", False)
+            output_callback("C++ Build Tools ready." if shutil.which("cl") else "C++ Build Tools installed. Retrying build...", False)
 
     @staticmethod
-    def _run_and_stream(cmd: list, output_callback=None) -> tuple[int, str]:
+    def _run_and_stream(cmd: list, output_callback=None, cwd=None) -> tuple[int, str]:
         full_err = []
         import os as _os
         env = {**_os.environ, "PYTHONUNBUFFERED": "1"}
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, bufsize=1, env=env
+            text=True, bufsize=1, env=env, creationflags=_NO_WINDOW, cwd=cwd
         )
         def _read(stream, is_err):
             for line in iter(stream.readline, ""):
@@ -112,7 +172,7 @@ class Installer:
             return False, err
         return False, err
 
-    def install_editor_dependencies(self, version_dir: Path, output_callback=None):
+    def install_editor_dependencies(self, version_dir: Path, output_callback=None, progress_callback=None):
         venv_dir = version_dir / ".venv"
         if sys.platform == "win32":
             venv_python = venv_dir / "Scripts" / "python.exe"
@@ -136,12 +196,14 @@ class Installer:
                 output_callback(f"Using {real_python}...", False)
             subprocess.run(
                 [str(real_python), "-m", "venv", str(venv_dir)],
-                check=True, capture_output=True, timeout=120
+                check=True, capture_output=True, creationflags=_NO_WINDOW
             )
             if output_callback:
                 output_callback("Virtual environment created.", False)
         if not venv_pip.exists():
             raise RuntimeError(f"Virtual environment creation failed: pip not found at {venv_pip}")
+        if progress_callback:
+            progress_callback(0.50, "Checking build tools...")
         self._ensure_msvc(output_callback)
         if output_callback:
             output_callback("Upgrading pip...", False)
@@ -160,6 +222,8 @@ class Installer:
             for i, pkg in enumerate(packages):
                 if output_callback:
                     output_callback(f"── Installing {pkg} ──", False)
+                if progress_callback:
+                    progress_callback(0.50 + 0.40 * i / count, f"Installing {pkg} ({i + 1}/{count})...")
                 ok, err = self._pip_install(venv_pip, pkg, output_callback)
                 if ok:
                     if output_callback:
@@ -174,8 +238,30 @@ class Installer:
                     f"Some dependencies failed to install:\n{msg}\n\n"
                     f"Try installing them manually in the editor's virtual environment."
                 )
+        if progress_callback:
+            progress_callback(0.92, "All dependencies installed.")
         if output_callback:
             output_callback("All dependencies installed.", False)
+
+        # Build Cython extensions after pip install so first launch is fast
+        setup_py = version_dir / "setup.py"
+        if setup_py.exists() and venv_python.exists():
+            if output_callback:
+                output_callback("Building native extensions...", False)
+            if progress_callback:
+                progress_callback(0.93, "Building native extensions...")
+            rc, err = self._run_and_stream(
+                [str(venv_python), "setup.py", "build_ext", "--inplace"],
+                output_callback, cwd=str(version_dir)
+            )
+            if rc == 0:
+                marker = version_dir / ".build_done"
+                marker.write_text("ok")
+                if output_callback:
+                    output_callback("Native extensions built.", False)
+            else:
+                if output_callback:
+                    output_callback(f"Extension build failed (rc={rc}). Will retry on editor launch.", True)
 
     def configure_registry(self, editor_path: str):
         import winreg
@@ -201,7 +287,7 @@ class Installer:
                 winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, f"ZarinEngine {version}")
                 winreg.SetValueEx(key, "DisplayVersion", 0, winreg.REG_SZ, version)
                 winreg.SetValueEx(key, "InstallLocation", 0, winreg.REG_SZ, install_dir)
-                winreg.SetValueEx(key, "Publisher", 0, winreg.REG_SZ, "EgorKonstrukt")
+                winreg.SetValueEx(key, "Publisher", 0, winreg.REG_SZ, "Zarrakun")
                 winreg.SetValueEx(key, "UninstallString", 0, winreg.REG_SZ,
                                   f'"{install_dir}\\main.py" "--uninstall"')
                 icon_path = Path(install_dir) / "zarin_icon.svg"
